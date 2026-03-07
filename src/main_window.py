@@ -34,7 +34,6 @@ class MainWindow(QMainWindow):
         self.selected_items = set()
         self.is_closing = False  # 添加关闭标志
         self.current_filter = None  # 当前筛选类型
-        self.deleted_records = []  # 用于撤销删除的记录
         
         # 连接信号到槽
         self.update_ui_signal.connect(self.load_records)
@@ -106,7 +105,7 @@ class MainWindow(QMainWindow):
     def init_ui(self):
         """初始化UI"""
         # 设置窗口属性
-        self.setWindowTitle('剪贴板管理 - Windows 11')
+        self.setWindowTitle('ClipboardPRO')
         self.setGeometry(100, 100, 800, 600)
         self.setMinimumSize(600, 400)
         
@@ -268,6 +267,10 @@ class MainWindow(QMainWindow):
         self.copy_btn.clicked.connect(self.copy_to_clipboard)
         self.delete_btn.clicked.connect(self.delete_selected)
         self.select_all_btn.clicked.connect(self.toggle_select_all)
+        
+        # 初始隐藏复制和删除按钮
+        self.copy_btn.setVisible(False)
+        self.delete_btn.setVisible(False)
         
         # 添加到右侧布局
         right_layout.addWidget(self.records_list)
@@ -1215,6 +1218,11 @@ class MainWindow(QMainWindow):
             if record_id in self.selected_items:
                 self.selected_items.remove(record_id)
         
+        # 更新按钮可见性
+        has_selection = len(self.selected_items) > 0
+        self.copy_btn.setVisible(has_selection)
+        self.delete_btn.setVisible(has_selection)
+        
         # 更新全选按钮文本
         self._update_select_all_button_text()
     
@@ -1223,6 +1231,9 @@ class MainWindow(QMainWindow):
         total_items = self.records_list.count()
         if total_items == 0:
             self.select_all_btn.setText('全选')
+            # 没有记录时隐藏所有操作按钮
+            self.copy_btn.setVisible(False)
+            self.delete_btn.setVisible(False)
             return
         
         # 如果全部选中，显示"取消全选"，否则显示"全选"
@@ -1230,6 +1241,11 @@ class MainWindow(QMainWindow):
             self.select_all_btn.setText('取消全选')
         else:
             self.select_all_btn.setText('全选')
+        
+        # 更新按钮可见性
+        has_selection = len(self.selected_items) > 0
+        self.copy_btn.setVisible(has_selection)
+        self.delete_btn.setVisible(has_selection)
     
     def show_text_context_menu(self, position, content):
         """显示文本内容的右键菜单
@@ -1426,109 +1442,17 @@ class MainWindow(QMainWindow):
         if not self.selected_items:
             return
         
-        # 显示确认对话框
-        reply = QMessageBox.question(
-            self, 
-            '确认删除', 
-            f'确定要删除选中的 {len(self.selected_items)} 条记录吗？',
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        
-        if reply == QMessageBox.StandardButton.Yes:
-            # 保存被删除的记录，用于撤销
-            self.deleted_records = []
-            for i in range(self.records_list.count()):
-                item = self.records_list.item(i)
-                if not item:
-                    continue
-                
-                try:
-                    record = item.data(Qt.ItemDataRole.UserRole)
-                    if record and record['id'] in self.selected_items:
-                        self.deleted_records.append(record)
-                except Exception:
-                    pass
-            
-            # 执行删除
-            self.storage.delete_multiple(self.selected_items)
-            self.load_records()
-            
-            # 显示撤销提示
-            self.show_undo_notification()
-    
-    def show_undo_notification(self):
-        """显示撤销删除的通知"""
-        if not self.deleted_records:
-            return
-        
-        # 创建通知widget
-        notification = QWidget(self, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
-        notification.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        notification.setStyleSheet("""
-            QWidget {
-                background-color: #f0f0f0;
-                border: 1px solid #ddd;
-                border-radius: 4px;
-                padding: 10px;
-            }
-            QLabel {
-                color: #333;
-                font-size: 13px;
-            }
-            QPushButton {
-                background-color: #4A90E2;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 5px 10px;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background-color: #357ABD;
-            }
-        """)
-        
-        layout = QHBoxLayout(notification)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(10)
-        
-        label = QLabel(f'已删除 {len(self.deleted_records)} 条记录')
-        undo_btn = QPushButton('撤销')
-        undo_btn.clicked.connect(self.undo_delete)
-        
-        layout.addWidget(label)
-        layout.addStretch()
-        layout.addWidget(undo_btn)
-        
-        # 设置通知位置
-        notification.setFixedWidth(300)
-        notification.move(self.geometry().right() - 320, self.geometry().top() + 20)
-        
-        # 显示通知
-        notification.show()
-        
-        # 3秒后自动隐藏
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(3000, notification.deleteLater)
-    
-    def undo_delete(self):
-        """撤销删除操作"""
-        if not self.deleted_records:
-            return
-        
-        # 恢复被删除的记录
-        for record in self.deleted_records:
-            self.storage.add_record(record)
-        
-        # 清空撤销记录
-        self.deleted_records = []
-        
+        # 直接执行删除
+        self.storage.delete_multiple(self.selected_items)
+        # 清空选中集合
+        self.selected_items.clear()
         # 重新加载记录
         self.load_records()
-        
-        # 显示恢复成功提示
-        QMessageBox.information(self, '提示', '已恢复被删除的记录')
+        # 更新按钮可见性
+        self.copy_btn.setVisible(False)
+        self.delete_btn.setVisible(False)
+    
+
     
     def toggle_select_all(self):
         """切换全选/取消全选"""
@@ -1719,4 +1643,3 @@ class MainWindow(QMainWindow):
             pass
         self.hide()
         print("窗口已最小化到托盘")
-        QMessageBox.information(self, '提示', '软件已最小化到系统托盘')
